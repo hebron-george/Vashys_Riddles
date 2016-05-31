@@ -4,36 +4,39 @@ package client;
  * * Created by Hebron on 5/8/2016.
  */
 
+import com.sun.deploy.util.StringUtils;
+
 import java.io.*;
 import java.net.*;
 import java.util.*;
 
 public class Bot {
     // For communicating with IRC
-    BufferedWriter writer;
-    BufferedReader reader;
-    Socket sock;
-    InputStream in;
+    private BufferedWriter writer;
+    private BufferedReader reader;
+    private Socket sock;
+    private InputStream in;
 
 
-    Properties prop = new Properties();
+    private Properties prop = new Properties();
 
     // IRC variables
-    String server;
-    String nick;
-    String user;
-    String channels[];
+    private String server;
+    private String nick;
+    private String user;
+    private String channels[];
 
     // Trivia variables
-    String questionsFile;
-    String keysFile;
-    String joinTextFile;
-    String exitTextFile;
-    String startTextFile;
-    String endTextFile;
-    int numOfAllowedWinners;
-    String[] playTimes;
-    int numOfQuestionsPerRound;
+    private String questionsFile;
+    private String keysFile;
+    private String joinTextFile;
+    private String exitTextFile;
+    private String startTextFile;
+    private String endTextFile;
+    private String winnerCongratsTextFile;
+    private int numOfAllowedWinners;
+    private String[] playTimes;
+    private int numOfQuestionsPerRound;
 
     public void startBot() throws Exception {
         System.out.println("*** starting bot ***");
@@ -79,10 +82,15 @@ public class Bot {
                 System.out.println("*** could not parse: " + l + " ***");
             } else {
                 String type = line.get("type").toString();
-                String replyTo = line.get("replyTo").toString(); // channel can be null
+                String postedTo = line.get("postedTo").toString(); // channel can be null
 
                 if (line.get("command").equals(":!restart")) {
                     readInConfigurations();
+                } else if (line.get("command").equals(":!test")) {
+                    String winners[] = {nick};
+                    sendKeysToWinners(winners);
+                } else if (line.get("command").toString().startsWith(":!addkey") && postedTo.equals(nick)) {
+                    addKeyToFile(line.get("commandParams").toString());
                 }
             }
         }
@@ -121,6 +129,7 @@ public class Bot {
             exitTextFile = prop.getProperty("exit_text");
             startTextFile = prop.getProperty("start_text");
             endTextFile = prop.getProperty("end_text");
+            winnerCongratsTextFile = prop.getProperty("winner_congrats_text");
             numOfAllowedWinners = Integer.parseInt(prop.getProperty("num_of_winners"));
             playTimes = prop.getProperty("times_to_play").split(",");
             numOfQuestionsPerRound = Integer.parseInt(prop.getProperty("num_of_questions_per_round"));
@@ -145,11 +154,16 @@ public class Bot {
             } else {
                 input.put("timestamp", new Date().toString());
                 input.put("type", portions[1]); // e.g. PRIVMSG
-                input.put("replyTo", portions[2]); // the user or channel to reply to
+                input.put("postedTo", portions[2]); // the user or channel to reply to
                 input.put("command", portions[3]);
+                String[] commandParams;
+                commandParams = Arrays.copyOfRange(portions, 4, portions.length);
+                input.put("commandParams", StringUtils.join(Arrays.asList(commandParams), " "));
             }
         } catch (IndexOutOfBoundsException e) {
-            System.out.println();
+            System.out.println("*** exception thrown when parsing line: " + line + " ***");
+            System.out.println(e.getMessage());
+            e.printStackTrace();
             // there's no channel
             return null;
         } catch (Exception e) {
@@ -159,5 +173,88 @@ public class Bot {
             return null;
         }
         return input;
+    }
+    private void sendKeysToWinners(String[] winners){
+
+        // Pull the congratulations text
+        // which will be sent right before the key is sent to a winner
+        String congratsText = null;
+        try {
+            FileReader fileReader = new FileReader(winnerCongratsTextFile);
+            BufferedReader bufferedReader = new BufferedReader(fileReader);
+            congratsText = bufferedReader.readLine();
+            bufferedReader.close();
+        } catch (FileNotFoundException e) {
+            System.out.println("ERROR: Couldn't find congrats text file: " + winnerCongratsTextFile);
+        } catch (IOException e) {
+            System.out.println("ERROR: Couldn't read from congrats text file: " + winnerCongratsTextFile );
+        }
+
+
+        for (String winner : winners) {
+            String key = getKeyPrize();
+            if (key == null || key.isEmpty())
+                System.out.println("ERROR: key not found in key file for user: " + winner);
+            else {
+                if (congratsText.isEmpty() || congratsText == null) {
+                    congratsText = "Congratulations!";
+                }
+                push("PRIVMSG " + winner + " :" + congratsText);
+                push("PRIVMSG " + winner + " :" + key);
+            }
+        }
+
+    }
+    private String getKeyPrize() {
+
+        String key = "";
+        try {
+            FileReader fileReader = new FileReader(keysFile);
+            BufferedReader br = new BufferedReader(fileReader);
+            key = br.readLine();
+            br.close();
+
+            removeFirstLine(keysFile);
+        } catch (FileNotFoundException ex) {
+            System.out.println("ERROR: Couldn't find keys file: " + keysFile);
+        } catch (IOException ex) {
+            System.out.println("ERROR: IO Exception when trying to read key from keys file: " + keysFile);
+        }
+
+        return key;
+    }
+    private void removeFirstLine(String fileName) throws IOException {
+        /* Got this method from: http://stackoverflow.com/a/13178980/1496918 */
+        RandomAccessFile raf = new RandomAccessFile(fileName, "rw");
+        //Initial write position
+        long writePosition = raf.getFilePointer();
+        raf.readLine();
+        // Shift the next lines upwards.
+        long readPosition = raf.getFilePointer();
+
+        byte[] buff = new byte[1024];
+        int n;
+        while (-1 != (n = raf.read(buff))) {
+            raf.seek(writePosition);
+            raf.write(buff, 0, n);
+            readPosition += n;
+            writePosition += n;
+            raf.seek(readPosition);
+        }
+        raf.setLength(writePosition);
+        raf.close();
+    }
+    private void addKeyToFile(String keyToWrite){
+        try {
+            FileWriter fw = new FileWriter(keysFile);
+            BufferedWriter bw = new BufferedWriter(fw);
+            bw.append(keyToWrite);
+
+            bw.close();
+            fw.close();
+
+        } catch (IOException ex){
+            System.out.println("ERROR: IO Exception when trying to add key to keys file: " + keysFile);
+        }
     }
 }
