@@ -10,10 +10,10 @@ Commands
 
 Add a key
 ---------
-!test
+* !test
 
 Runs whatever tests you want inside the method.
 
-!addkey <_key_>
+* !addkey <_key_>
 
 Adds a key to your keys file. It needs to be directly messaged to the bot.
